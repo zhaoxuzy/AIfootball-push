@@ -1,5 +1,9 @@
-import os
 import sys
+from pathlib import Path
+# 将项目根目录加入 sys.path，以便导入 src 包
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import os
 import asyncio
 from datetime import datetime
 
@@ -16,7 +20,7 @@ from src.collectors.fundamentals import (
 )
 from src.collectors.motivation import collect_motivation
 from src.collectors.rhythm import collect_rhythm
-from src.collectors.odds_api import collect_odds_api   # 改用官方API
+from src.collectors.odds_api import collect_odds_api
 from src.collectors.odds_intl import collect_international_odds
 from src.collectors.environment import collect_environment
 from src.collectors.integrity import self_check
@@ -38,7 +42,6 @@ async def main():
     for match in matches:
         print(f"开始采集: {match['match_no']} {match['home_team']} VS {match['away_team']}")
 
-        # 翻译队名（中文→英文）
         home_en = get_english_team_name(match['home_team'])
         away_en = get_english_team_name(match['away_team'])
         match['home_team_en'] = home_en
@@ -50,8 +53,8 @@ async def main():
                 "联赛": match.get('league'),
                 "主队": match['home_team'],
                 "客队": match['away_team'],
-                "数据覆盖等级": None,      # 阶段8填写
-                "竞彩赔率状态": False,     # 阶段6判断后更新
+                "数据覆盖等级": None,
+                "竞彩赔率状态": False,
                 "数据获取时间": now_str()
             },
             "赛季阶段信息": {},
@@ -64,11 +67,9 @@ async def main():
             "自检": {}
         }
 
-        # ----- 阶段2：赛季阶段信息 -----
         print("  阶段2: 赛季信息")
         match_data['赛季阶段信息'] = collect_season_info(match, home_en, away_en)
 
-        # ----- 阶段3：基本面 -----
         print("  阶段3: 基本面")
         for side, team_en in [('主队', home_en), ('客队', away_en)]:
             if team_en:
@@ -84,31 +85,25 @@ async def main():
         else:
             match_data['基本面']['历史交锋'] = None
 
-        # ----- 阶段4：战意指数 -----
         print("  阶段4: 战意指数")
         match_data['战意指数'] = collect_motivation(match, home_en, away_en)
 
-        # ----- 阶段5：节奏数据 -----
         print("  阶段5: 节奏数据")
         match_data['节奏数据']['主队'] = collect_rhythm(home_en) if home_en else None
         match_data['节奏数据']['客队'] = collect_rhythm(away_en) if away_en else None
 
-        # ----- 阶段6：竞彩盘口（官方API） -----
         print("  阶段6: 竞彩盘口（官方API）")
-        odds_data = collect_odds_api(match)   # 同步调用，无需 await
+        odds_data = collect_odds_api(match)
         match_data['竞彩盘口'] = odds_data
         if odds_data.get("胜平负", {}).get("即赔", {}).get("主胜"):
             match_data['基本标识']['竞彩赔率状态'] = True
 
-        # ----- 阶段6（续）：国际赔率、凯利、资金流向 -----
         print("  阶段6: 国际赔率")
         match_data['国际赔率'] = collect_international_odds(match)
 
-        # ----- 阶段7：环境变量 -----
         print("  阶段7: 环境变量")
         match_data['环境变量'] = collect_environment(match)
 
-        # ----- 阶段8：自检与覆盖等级 -----
         print("  阶段8: 自检")
         match_data['自检'] = self_check(match_data)
         match_data['基本标识']['数据覆盖等级'] = match_data['自检']['数据覆盖等级']
@@ -116,13 +111,11 @@ async def main():
         result_array.append(match_data)
         print(f"完成: {match['match_no']}\n")
 
-    # 保存 JSON
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"jc_football_{timestamp}.json"
     filepath = save_json(result_array, filename)
     print(f"JSON 已保存: {filepath}")
 
-    # 生成摘要并发送钉钉
     summary_lines = ["### 竞彩数据采集完成",
                      f"- 采集时间：{now_str()}",
                      f"- 比赛数量：{len(result_array)}"]
