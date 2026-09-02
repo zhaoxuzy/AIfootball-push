@@ -1,10 +1,9 @@
 import re
 import json
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
 from src.utils import now_str
 
 def decode_crs(code):
-    """解码比分编码"""
     map_special = {"s1sh": "胜其它", "s1sd": "平其它", "s1sa": "负其它"}
     if code in map_special:
         return map_special[code]
@@ -15,13 +14,11 @@ def decode_crs(code):
         return code
 
 def decode_ttg(code):
-    """解码总进球"""
     map_goals = {f"s{i}": str(i) for i in range(7)}
     map_goals["s7"] = "7+"
     return map_goals.get(code, code)
 
 def decode_hafu(code):
-    """解码半全场编码"""
     mapping = {
         "hh": "胜胜", "hd": "胜平", "ha": "胜负",
         "dh": "平胜", "dd": "平平", "da": "平负",
@@ -29,7 +26,7 @@ def decode_hafu(code):
     }
     return mapping.get(code, code)
 
-def collect_odds_api(match):
+async def collect_odds_api(match):
     data = {
         "胜平负": {
             "初赔": {"主胜": None, "平": None, "客胜": None, "时间": None},
@@ -55,22 +52,22 @@ def collect_odds_api(match):
     home_team = match.get("home_team", "")
     away_team = match.get("away_team", "")
 
-    captured_responses = []  # 用于存储捕获到的API响应
+    captured_responses = []
 
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
-            page = context.new_page()
+            page = await context.new_page()
             page.set_default_timeout(60000)
 
-            # 监听网络响应，筛选包含 getMatchCalculatorV1.qry 的请求
-            def handle_response(response):
+            # 监听网络响应
+            async def handle_response(response):
                 if "getMatchCalculatorV1.qry" in response.url:
                     try:
-                        body = response.json()
+                        body = await response.json()
                         captured_responses.append(body)
                         print(f"[竞彩API] 捕获到响应，长度: {len(json.dumps(body))}")
                     except Exception as e:
@@ -78,37 +75,35 @@ def collect_odds_api(match):
 
             page.on("response", handle_response)
 
-            # 打开竞彩官网页面（手机版或电脑版均可，这里用手机版）
+            # 打开页面
             url = "https://m.sporttery.cn/mjc/jsq/zqspf/"
             print(f"[竞彩API] 打开页面: {url}")
-            page.goto(url, wait_until="networkidle")
-            page.wait_for_timeout(5000)  # 额外等待，确保所有请求完成
+            await page.goto(url, wait_until="networkidle")
+            await page.wait_for_timeout(5000)
 
-            # 如果尚未捕获到数据，尝试点击其他玩法标签触发请求
+            # 如果没有捕获到数据，尝试点击其他玩法标签
             if not captured_responses:
-                print("[竞彩API] 未捕获到数据，尝试点击比分、总进球、半全场标签")
+                print("[竞彩API] 未捕获到数据，尝试点击比分、进球数、半全场标签")
                 tabs = ["比分", "进球数", "半全场"]
                 for tab in tabs:
                     try:
-                        page.click(f"text={tab}")
-                        page.wait_for_timeout(2000)
+                        await page.click(f"text={tab}")
+                        await page.wait_for_timeout(2000)
                         if captured_responses:
                             break
                     except Exception as e:
                         print(f"[竞彩API] 点击 {tab} 失败: {e}")
 
-            browser.close()
+            await browser.close()
     except Exception as e:
         print(f"[竞彩API] Playwright 执行异常: {e}")
         return data
 
-    # 从捕获的响应中提取数据
-    # 通常第一个响应包含全部玩法，也可能分多个响应
     if not captured_responses:
         print("[竞彩API] 未捕获到任何API响应")
         return data
 
-    # 尝试合并所有响应中的 matchList
+    # 合并所有响应中的 matchList
     all_matches = []
     for resp in captured_responses:
         try:
@@ -138,7 +133,7 @@ def collect_odds_api(match):
         print(f"[竞彩API] 未找到比赛 {match_no} {home_team} VS {away_team}")
         return data
 
-    # 1. 胜平负 (had)
+    # 解析各玩法赔率（同之前版本）
     had = target.get("had", {})
     if had:
         h, d, a = had.get("h"), had.get("d"), had.get("a")
@@ -157,7 +152,6 @@ def collect_odds_api(match):
         if single is not None:
             data["是否单关"] = bool(single)
 
-    # 2. 让球胜平负 (hhad)
     hhad = target.get("hhad", {})
     if hhad:
         goal = hhad.get("goal") or hhad.get("rq") or hhad.get("hhadGoal")
@@ -172,7 +166,6 @@ def collect_odds_api(match):
             data["让球胜平负"]["即赔"]["让平"] = str(d)
             data["让球胜平负"]["即赔"]["让负"] = str(a)
 
-    # 3. 比分赔率 (crs)
     crs = target.get("crs", {})
     if crs:
         score_dict = {}
@@ -184,7 +177,6 @@ def collect_odds_api(match):
         if score_dict:
             data["比分赔率"] = score_dict
 
-    # 4. 总进球赔率 (ttg)
     ttg = target.get("ttg", {})
     if ttg:
         total_dict = {}
@@ -196,7 +188,6 @@ def collect_odds_api(match):
         if total_dict:
             data["总进球赔率"] = total_dict
 
-    # 5. 半全场赔率 (hafu)
     hafu = target.get("hafu", {})
     if hafu:
         hf_dict = {}
@@ -208,7 +199,6 @@ def collect_odds_api(match):
         if hf_dict:
             data["半全场赔率"] = hf_dict
 
-    # 6. 返还率计算（胜平负）
     try:
         h = float(data["胜平负"]["即赔"]["主胜"])
         d = float(data["胜平负"]["即赔"]["平"])
