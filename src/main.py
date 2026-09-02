@@ -1,6 +1,5 @@
 import sys
 from pathlib import Path
-# 将项目根目录加入 sys.path，以便导入 src 包
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import os
@@ -93,7 +92,7 @@ async def main():
         match_data['节奏数据']['客队'] = collect_rhythm(away_en) if away_en else None
 
         print("  阶段6: 竞彩盘口（官方API）")
-        odds_data = collect_odds_api(match)
+        odds_data = await collect_odds_api(match)   # 关键：必须 await
         match_data['竞彩盘口'] = odds_data
         if odds_data.get("胜平负", {}).get("即赔", {}).get("主胜"):
             match_data['基本标识']['竞彩赔率状态'] = True
