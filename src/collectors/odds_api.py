@@ -73,13 +73,11 @@ async def collect_odds_api(match):
         if tr:
             row_text = tr.get_text(" ", strip=True)
             print(f"[500彩票网] 胜平负/让球行文本: {row_text}")
-            # 让球数
             handicap_match = re.search(r"([+-])(\d+)", row_text)
             if handicap_match:
                 sign = handicap_match.group(1)
                 num = int(handicap_match.group(2))
                 data["让球胜平负"]["官方让球数"] = f"{sign}{num}"
-            # 提取所有小数
             odds = re.findall(r"\d+\.\d+", row_text)
             print(f"[500彩票网] 小数列表: {odds}")
             if len(odds) >= 3:
@@ -143,7 +141,7 @@ async def collect_odds_api(match):
         else:
             print("[500彩票网] 半全场页面未找到比赛行")
 
-    # ========== 4. 比分（Playwright 点击展开，固定31项） ==========
+    # ========== 4. 比分（重点：统一展开 + 固定顺序映射） ==========
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -175,47 +173,45 @@ async def collect_odds_api(match):
                 await browser.close()
                 return data
 
-            # 点击展开
-            try:
-                expand_btn = row_locator.locator("button:has-text('展开投注'), a:has-text('展开投注'), span:has-text('展开投注')").first
+            # 获取行文本（点击前）
+            row_text = await row_locator.inner_text()
+            print(f"[500彩票网] 比分行文本(点击前):\n{row_text}")
+
+            # 检查当前行内是否已有足够赔率数字
+            odds = re.findall(r"\d+\.\d+", row_text)
+            print(f"[500彩票网] 点击前比分小数数量: {len(odds)}")
+
+            if len(odds) < 31:
+                # 尝试点击展开按钮
+                expand_btn = row_locator.locator("text=展开投注").first
                 if await expand_btn.count() > 0:
                     await expand_btn.click()
-                    await page.wait_for_timeout(3000)
-                    print("[500彩票网] 已点击比分展开投注")
+                    await page.wait_for_timeout(3000)  # 等待展开动画和数据加载
+                    row_text = await row_locator.inner_text()
+                    print(f"[500彩票网] 比分行文本(点击后):\n{row_text}")
                 else:
-                    print("[500彩票网] 未找到展开投注按钮")
-            except Exception as e:
-                print(f"[500彩票网] 点击展开失败: {e}")
+                    # 检查是否已展开（存在“收起投注”按钮）
+                    collapse_btn = row_locator.locator("text=收起投注").first
+                    if await collapse_btn.count() == 0:
+                        print("[500彩票网] 未找到展开/收起按钮，可能无比分数据")
+                    else:
+                        print("[500彩票网] 已是展开状态，但数字不足，请检查页面结构")
 
-            # 重新获取行文本
-            row_text = await row_locator.inner_text()
-            print(f"[500彩票网] 比分行文本:\n{row_text}")
+            # 最终提取所有小数
+            odds = re.findall(r"\d+\.\d+", row_text)
+            print(f"[500彩票网] 最终比分小数数量: {len(odds)}")
 
-            # 提取所有小数
-            all_odds = re.findall(r"\d+\.\d+", row_text)
-            print(f"[500彩票网] 比分小数数量: {len(all_odds)}")
-
-            # 固定顺序映射（31项）
-            if len(all_odds) >= 31:
+            if len(odds) >= 31:
+                # 固定顺序映射
                 home_keys = ["1:0","2:0","2:1","3:0","3:1","3:2","4:0","4:1","4:2","5:0","5:1","5:2","胜其它"]
                 draw_keys = ["0:0","1:1","2:2","3:3","平其它"]
                 away_keys = ["0:1","0:2","1:2","0:3","1:3","2:3","0:4","1:4","2:4","0:5","1:5","2:5","负其它"]
                 all_keys = home_keys + draw_keys + away_keys
-                score_dict = {k: v for k, v in zip(all_keys, all_odds)}
+                score_dict = {k: v for k, v in zip(all_keys, odds)}
                 data["比分赔率"] = score_dict
                 print("[500彩票网] 已按固定顺序映射比分赔率")
             else:
-                # 备用：按文本匹配
-                pairs = re.findall(r"(\d+[:：]\d+)\s+(\d+\.\d+)", row_text)
-                if pairs:
-                    score_dict = {}
-                    for score, odds in pairs:
-                        score_clean = score.replace(":", "-").replace("：", "-")
-                        score_dict[score_clean] = odds
-                    data["比分赔率"] = score_dict
-                    print(f"[500彩票网] 备用匹配到比分赔率 {len(score_dict)} 项")
-                else:
-                    print("[500彩票网] 未匹配到比分赔率")
+                print("[500彩票网] 比分赔率不足31个，未解析")
 
             await browser.close()
     except Exception as e:
