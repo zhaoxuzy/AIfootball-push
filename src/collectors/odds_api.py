@@ -60,12 +60,22 @@ def collect_odds_api(match):
     away_team = match.get("away_team", "")
 
     url = "https://webapi.sporttery.cn/gateway/jc/football/getMatchCalculatorV1.qry"
+
+    # 根据常见请求补充参数，如仍失败请根据浏览器抓包调整
     params = {
+        "clientCode": "3001",      # 常用客户端代码，可能需修改
+        "channelId": "5001",       # 渠道ID，可能需修改
         "poolCode": "had,hhad,crs,ttg,hafu"
     }
+
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "https://m.sporttery.cn/mjc/jsq/zqspf/"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://m.sporttery.cn/mjc/jsq/zqspf/",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Connection": "keep-alive",
+        # 如果有 Cookie，请取消注释并填入
+        # "Cookie": "在这里粘贴从浏览器复制的Cookie"
     }
 
     try:
@@ -111,7 +121,6 @@ def collect_odds_api(match):
         d = had.get("d")
         a = had.get("a")
         if h and d and a:
-            # 初赔与即赔相同
             data["胜平负"]["初赔"]["主胜"] = str(h)
             data["胜平负"]["初赔"]["平"] = str(d)
             data["胜平负"]["初赔"]["客胜"] = str(a)
@@ -181,7 +190,7 @@ def collect_odds_api(match):
         if hf_dict:
             data["半全场赔率"] = hf_dict
 
-    # 6. 返还率计算
+    # 6. 返还率计算（胜平负）
     try:
         h = float(data["胜平负"]["即赔"]["主胜"])
         d = float(data["胜平负"]["即赔"]["平"])
