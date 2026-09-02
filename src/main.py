@@ -1,20 +1,30 @@
-import os
 import sys
+from pathlib import Path
+# 将项目根目录加入 sys.path，确保可以导入 src 包
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import os
 import asyncio
 from datetime import datetime
 
-from input_parser import parse_match_input
-from team_mapper import get_english_team_name
-from collectors.season_info import collect_season_info
-from collectors.fundamentals import (collect_elo, collect_xg, collect_recent_form,
-                                     collect_injuries, collect_coach_info, collect_head_to_head)
-from collectors.motivation import collect_motivation
-from collectors.rhythm import collect_rhythm
-from collectors.odds_500 import collect_500_odds
-from collectors.odds_intl import collect_international_odds
-from collectors.environment import collect_environment
-from collectors.integrity import self_check
-from utils import save_json, send_dingtalk, now_str
+from src.input_parser import parse_match_input
+from src.team_mapper import get_english_team_name
+from src.collectors.season_info import collect_season_info
+from src.collectors.fundamentals import (
+    collect_elo,
+    collect_xg,
+    collect_recent_form,
+    collect_injuries,
+    collect_coach_info,
+    collect_head_to_head
+)
+from src.collectors.motivation import collect_motivation
+from src.collectors.rhythm import collect_rhythm
+from src.collectors.odds_500 import collect_500_odds
+from src.collectors.odds_intl import collect_international_odds
+from src.collectors.environment import collect_environment
+from src.collectors.integrity import self_check
+from src.utils import save_json, send_dingtalk, now_str
 
 async def main():
     input_text = os.getenv("INPUT_MATCHES", "")
