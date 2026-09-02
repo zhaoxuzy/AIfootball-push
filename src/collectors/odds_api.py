@@ -31,7 +31,7 @@ def decode_hafu(code):
 
 def collect_odds_api(match):
     """
-    通过竞彩官方API获取全部赔率。
+    通过竞彩官方API获取全部赔率（使用备用 uniform 端点）。
     返回标准化 dict，缺失字段为 None。
     """
     data = {
@@ -55,16 +55,15 @@ def collect_odds_api(match):
         "查询时间": now_str()
     }
 
-    match_no = match.get("match_no", "")      # 如 "周三001"
+    match_no = match.get("match_no", "")
     home_team = match.get("home_team", "")
     away_team = match.get("away_team", "")
 
-    url = "https://webapi.sporttery.cn/gateway/jc/football/getMatchCalculatorV1.qry"
+    # 更换为备用端点
+    url = "https://webapi.sporttery.cn/gateway/uniform/football/getMatchCalculatorV1.qry"
 
-    # 根据常见请求补充参数，如仍失败请根据浏览器抓包调整
     params = {
-        "clientCode": "3001",      # 常用客户端代码，可能需修改
-        "channelId": "5001",       # 渠道ID，可能需修改
+        "channel": "c",  # 新增 channel 参数
         "poolCode": "had,hhad,crs,ttg,hafu"
     }
 
@@ -74,8 +73,6 @@ def collect_odds_api(match):
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Connection": "keep-alive",
-        # 如果有 Cookie，请取消注释并填入
-        # "Cookie": "在这里粘贴从浏览器复制的Cookie"
     }
 
     try:
@@ -100,11 +97,9 @@ def collect_odds_api(match):
     # 匹配目标比赛
     target = None
     for m in match_list:
-        # 根据编号匹配
         if m.get("matchNumStr") == match_no or m.get("matchNum") == match_no:
             target = m
             break
-        # 根据队名匹配
         if (m.get("homeTeam") == home_team or home_team in m.get("homeTeam", "")) and \
            (m.get("awayTeam") == away_team or away_team in m.get("awayTeam", "")):
             target = m
@@ -127,12 +122,10 @@ def collect_odds_api(match):
             data["胜平负"]["即赔"]["主胜"] = str(h)
             data["胜平负"]["即赔"]["平"] = str(d)
             data["胜平负"]["即赔"]["客胜"] = str(a)
-            # 时间
             t = had.get("updateTime") or had.get("updateDate")
             if t:
                 data["胜平负"]["初赔"]["时间"] = t
                 data["胜平负"]["即赔"]["时间"] = t
-        # 是否单关
         single = had.get("single")
         if single is not None:
             data["是否单关"] = bool(single)
