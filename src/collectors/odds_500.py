@@ -1,9 +1,12 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
 import asyncio
 import re
-from pathlib import Path
 from urllib.parse import quote
 from playwright.async_api import async_playwright
-from utils import now_str
+from src.utils import now_str
 
 async def collect_500_odds(match):
     """
@@ -59,7 +62,6 @@ async def collect_500_odds(match):
             except Exception as e:
                 print(f"[500彩票网] 保存赛程页调试文件失败: {e}")
 
-            # 查找比赛链接
             try:
                 locator = page.locator(f"text={match_no}").first
                 if await locator.count() > 0:
@@ -98,10 +100,7 @@ async def collect_500_odds(match):
             except Exception as e:
                 print(f"[500彩票网] 保存详情页调试文件失败: {e}")
 
-            # 以下为占位解析，待根据实际页面调整
             html = await page.content()
-            # 简单提取所有赔率数字（调试用）
-            # 请下载debug文件后分析，完善此部分
             try:
                 spf_section = page.locator("text=胜平负").first
                 if await spf_section.count() > 0:
