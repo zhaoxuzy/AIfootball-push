@@ -1,66 +1,53 @@
 import requests
 import re
 import soccerdata as sd
+from soccerdata import FBref
 from datetime import datetime, timedelta
 
-# 中文联赛到 soccerdata 联赛 key 的映射
+# 中文联赛到 soccerdata 联赛 key 的映射（只保留 FBref 支持的联赛）
 LEAGUE_KEY_MAP = {
     "英格兰超级联赛": "ENG-Premier League",
-    "英格兰冠军联赛": "ENG-Championship",
     "西班牙甲级联赛": "ESP-La Liga",
     "意大利甲级联赛": "ITA-Serie A",
     "德国甲级联赛": "GER-Bundesliga",
     "法国甲级联赛": "FRA-Ligue 1",
-    "荷兰甲级联赛": "NED-Eredivisie",
-    "葡萄牙超级联赛": "POR-Primeira Liga",
-    "美国职业足球大联盟": "USA-Major League Soccer",
-    "巴西甲级联赛": "BRA-Serie A",
-    "阿根廷甲级联赛": "ARG-Primera División",
-    "墨西哥超级联赛": "MEX-Liga MX",
-    # 其他联赛暂不映射，返回 None
+    "欧洲冠军联赛": "INT-World Cup",  # 欧冠可能不支持，但保留
 }
 
 def get_league_key(league_cn):
-    return LEAGUE_KEY_MAP.get(league_cn)
+    """根据中文联赛名获取 soccerdata 使用的联赛 key，未映射或 FBref 不支持时返回 None"""
+    key = LEAGUE_KEY_MAP.get(league_cn)
+    if key and key in FBref.valid_leagues():
+        return key
+    return None
 
 def collect_elo(team_name_en):
-    """尝试从 ClubElo API 获取 Elo 评分"""
+    """尝试从 ClubElo API 获取 Elo 评分（暂未实现具体解析）"""
     data = {"Elo评分": None, "来源": None, "来源URL": None, "更新时间": None}
     if not team_name_en:
         return data
-    # ClubElo API 需要精确的球队名，尝试直接请求
-    url = f"http://api.clubelo.com/{team_name_en.replace(' ', '')}"
-    try:
-        resp = requests.get(url, timeout=10)
-        if resp.status_code == 200:
-            # API 返回 CSV 或 JSON？根据文档调整，这里假设返回 JSON
-            # 实际需测试，此处仅示意
-            # 可能返回 {"elo": 1800, ...}
-            # 我们先留空，后续完善
-            pass
-    except Exception as e:
-        print(f"Elo获取失败: {e}")
+    # ClubElo API 需要精确的球队名，此处仅占位，后续完善
     return data
 
 def collect_xg(team_name_en, league_key, season="2026-2027"):
-    """使用 Understat 获取球队 xG/xGA"""
+    """使用 FBref 获取球队 xG/xGA"""
     data = {"本赛季xG": None, "本赛季xGA": None, "近5场xG": None, "近5场xGA": None,
             "xG来源": None, "xG是否替代指标": False}
     if not team_name_en or not league_key:
         return data
     try:
-        understat = sd.Understat(leagues=league_key, seasons=season)
-        team_stats = understat.read_team_season_stats()
+        fbref = FBref(leagues=league_key, seasons=season)
+        team_stats = fbref.read_team_season_stats()
         # 查找球队（可能名称不完全一致，尝试模糊匹配）
         matches = team_stats[team_stats['team'].str.contains(team_name_en, case=False, na=False)]
         if not matches.empty:
             row = matches.iloc[0]
-            data["本赛季xG"] = row.get("xG")
-            data["本赛季xGA"] = row.get("xGA")
-            data["xG来源"] = "Understat"
-            # 获取近5场 xG 需要从比赛数据计算，此处暂不实现
+            data["本赛季xG"] = row.get("xg")
+            data["本赛季xGA"] = row.get("xga")
+            data["xG来源"] = "FBref"
+            # 近5场 xG 需要从比赛数据计算，此处暂不实现
         else:
-            print(f"Understat 未找到球队 {team_name_en}")
+            print(f"FBref 未找到球队 {team_name_en}")
     except Exception as e:
         print(f"xG获取失败: {e}")
     return data
@@ -83,7 +70,7 @@ def collect_recent_form(team_name_en, league_key, season="2026-2027"):
     if not team_name_en or not league_key:
         return data
     try:
-        fbref = sd.FBref(leagues=league_key, seasons=season)
+        fbref = FBref(leagues=league_key, seasons=season)
         matches = fbref.read_schedule()
         # 筛选主队或客队为 team_name_en 的比赛
         team_matches = matches[(matches['home_team'] == team_name_en) | (matches['away_team'] == team_name_en)]
@@ -98,7 +85,6 @@ def collect_recent_form(team_name_en, league_key, season="2026-2027"):
         team_matches = team_matches.sort_values('date', ascending=False)
         recent5 = team_matches.head(5)
 
-        # 计算近5场战绩
         wins = draws = losses = 0
         goals_for = goals_against = 0
         opponents = []
@@ -151,7 +137,7 @@ def collect_recent_form(team_name_en, league_key, season="2026-2027"):
 
         total_matches = len(team_matches)
         if total_matches > 0:
-            data["胜率"] = (wins + draws / 2) / total_matches  # 简单胜率，可根据需要调整
+            data["胜率"] = (wins + draws / 2) / total_matches
     except Exception as e:
         print(f"近期战绩获取失败: {e}")
     return data
