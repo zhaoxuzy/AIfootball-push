@@ -1,30 +1,20 @@
+import asyncio
 import re
-import json
+import requests
+from pathlib import Path
+from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from src.utils import now_str
 
 def decode_crs(code):
-    map_special = {"s1sh": "胜其它", "s1sd": "平其它", "s1sa": "负其它"}
-    if code in map_special:
-        return map_special[code]
-    parts = code[1:].split("s", 1)
-    try:
-        return f"{int(parts[0])}:{int(parts[1])}"
-    except:
-        return code
+    """解码比分编码（备用，实际本方案用页面解析）"""
+    return code
 
 def decode_ttg(code):
-    map_goals = {f"s{i}": str(i) for i in range(7)}
-    map_goals["s7"] = "7+"
-    return map_goals.get(code, code)
+    return code
 
 def decode_hafu(code):
-    mapping = {
-        "hh": "胜胜", "hd": "胜平", "ha": "胜负",
-        "dh": "平胜", "dd": "平平", "da": "平负",
-        "ah": "负胜", "ad": "负平", "aa": "负负"
-    }
-    return mapping.get(code, code)
+    return code
 
 async def collect_odds_api(match):
     data = {
@@ -49,156 +39,198 @@ async def collect_odds_api(match):
     }
 
     match_no = match.get("match_no", "")
+    match_date = match.get("match_date", "")
     home_team = match.get("home_team", "")
     away_team = match.get("away_team", "")
 
-    captured_responses = []
+    # 清洗队名
+    if " " in home_team:
+        home_team = home_team.strip().split()[-1]
+    if " " in away_team:
+        away_team = away_team.strip().split()[-1]
 
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Connection": "keep-alive"
+    }
+
+    def fetch_soup(url):
+        """请求页面并返回 BeautifulSoup 对象"""
+        try:
+            resp = requests.get(url, headers=headers, timeout=20)
+            resp.raise_for_status()
+            if resp.encoding == "ISO-8859-1":
+                resp.encoding = "gb2312"
+            elif not resp.encoding:
+                resp.encoding = "gb2312"
+            return BeautifulSoup(resp.text, "lxml")
+        except Exception as e:
+            print(f"[500彩票网] 请求失败 {url}: {e}")
+            return None
+
+    def find_target_row(soup, match_no, home_team, away_team):
+        """查找目标比赛行"""
+        for tr in soup.find_all("tr"):
+            text = tr.get_text(" ", strip=True)
+            if match_no in text or home_team in text or away_team in text:
+                return tr
+        return None
+
+    # ============ 1. 胜平负/让球胜平负 (playid=354&vtype=nspf) ============
+    url_spf = f"https://trade.500.com/jczq/?playid=354&g=2&vtype=nspf&date={match_date}"
+    soup_spf = fetch_soup(url_spf)
+    if soup_spf:
+        tr = find_target_row(soup_spf, match_no, home_team, away_team)
+        if tr:
+            row_text = tr.get_text(" ", strip=True)
+            print(f"[500彩票网] 胜平负/让球行文本: {row_text}")
+            handicap_match = re.search(r"([+-])(\d+)", row_text)
+            if handicap_match:
+                sign = handicap_match.group(1)
+                num = int(handicap_match.group(2))
+                data["让球胜平负"]["官方让球数"] = f"{sign}{num}"
+            odds = re.findall(r"\d+\.\d+", row_text)
+            print(f"[500彩票网] 小数赔率列表: {odds}")
+            if len(odds) >= 3:
+                h, d, a = odds[0], odds[1], odds[2]
+                data["胜平负"]["初赔"]["主胜"] = h
+                data["胜平负"]["初赔"]["平"] = d
+                data["胜平负"]["初赔"]["客胜"] = a
+                data["胜平负"]["即赔"]["主胜"] = h
+                data["胜平负"]["即赔"]["平"] = d
+                data["胜平负"]["即赔"]["客胜"] = a
+            if len(odds) >= 6:
+                rh, rd, ra = odds[3], odds[4], odds[5]
+                data["让球胜平负"]["初赔"]["让胜"] = rh
+                data["让球胜平负"]["初赔"]["让平"] = rd
+                data["让球胜平负"]["初赔"]["让负"] = ra
+                data["让球胜平负"]["即赔"]["让胜"] = rh
+                data["让球胜平负"]["即赔"]["让平"] = rd
+                data["让球胜平负"]["即赔"]["让负"] = ra
+        else:
+            print("[500彩票网] 胜平负/让球页面未找到比赛行")
+
+    # ============ 2. 总进球 (playid=270) ============
+    url_total = f"https://trade.500.com/jczq/?playid=270&g=2&date={match_date}"
+    soup_total = fetch_soup(url_total)
+    if soup_total:
+        tr = find_target_row(soup_total, match_no, home_team, away_team)
+        if tr:
+            # 获取所有 td，去除前几个信息列，剩下的即为赔率
+            tds = tr.find_all("td")
+            # 调试：打印所有 td 文本
+            td_texts = [td.get_text(strip=True) for td in tds]
+            print(f"[500彩票网] 总进球行所有单元格: {td_texts}")
+
+            # 假设赔率从第5个td开始（索引4），共8个
+            if len(tds) >= 12:
+                odds = [td.get_text(strip=True) for td in tds[4:12]]
+                # 去除可能的非数字字符（如箭头）
+                odds = [re.sub(r"[^\d.]", "", o) for o in odds]
+                if all(re.match(r"\d+\.\d+", o) for o in odds):
+                    total_dict = {
+                        "0": odds[0],
+                        "1": odds[1],
+                        "2": odds[2],
+                        "3": odds[3],
+                        "4": odds[4],
+                        "5": odds[5],
+                        "6": odds[6],
+                        "7+": odds[7]
+                    }
+                    data["总进球赔率"] = total_dict
+                    print(f"[500彩票网] 已解析总进球赔率")
+                else:
+                    print("[500彩票网] 总进球赔率单元格格式异常")
+            else:
+                print("[500彩票网] 总进球行 td 数量不足")
+        else:
+            print("[500彩票网] 总进球页面未找到比赛行")
+
+    # ============ 3. 半全场 (playid=272) ============
+    url_hf = f"https://trade.500.com/jczq/?playid=272&g=2&date={match_date}"
+    soup_hf = fetch_soup(url_hf)
+    if soup_hf:
+        tr = find_target_row(soup_hf, match_no, home_team, away_team)
+        if tr:
+            tds = tr.find_all("td")
+            td_texts = [td.get_text(strip=True) for td in tds]
+            print(f"[500彩票网] 半全场行所有单元格: {td_texts}")
+
+            # 假设赔率从第5个td开始，共9个
+            if len(tds) >= 14:
+                odds = [td.get_text(strip=True) for td in tds[4:13]]
+                odds = [re.sub(r"[^\d.]", "", o) for o in odds]
+                if all(re.match(r"\d+\.\d+", o) for o in odds):
+                    options = ["胜胜", "胜平", "胜负", "平胜", "平平", "平负", "负胜", "负平", "负负"]
+                    hf_dict = {opt: odds[i] for i, opt in enumerate(options)}
+                    data["半全场赔率"] = hf_dict
+                    print(f"[500彩票网] 已解析半全场赔率")
+                else:
+                    print("[500彩票网] 半全场赔率单元格格式异常")
+            else:
+                print("[500彩票网] 半全场行 td 数量不足")
+        else:
+            print("[500彩票网] 半全场页面未找到比赛行")
+
+    # ============ 4. 比分 (playid=271) 需要 Playwright 点击展开 ============
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            )
+            context = await browser.new_context(user_agent=headers["User-Agent"])
             page = await context.new_page()
-            page.set_default_timeout(60000)
+            page.set_default_timeout(120000)  # 超时延长到120秒
 
-            # 监听网络响应
-            async def handle_response(response):
-                if "getMatchCalculatorV1.qry" in response.url:
-                    try:
-                        body = await response.json()
-                        captured_responses.append(body)
-                        print(f"[竞彩API] 捕获到响应，长度: {len(json.dumps(body))}")
-                    except Exception as e:
-                        print(f"[竞彩API] 解析响应失败: {e}")
+            url_score = f"https://trade.500.com/jczq/?playid=271&g=2&date={match_date}"
+            print(f"[500彩票网] 访问比分页面: {url_score}")
+            await page.goto(url_score, wait_until="load")
+            await page.wait_for_timeout(8000)
 
-            page.on("response", handle_response)
+            # 定位目标行
+            row_locator = None
+            locator = page.locator(f"text={match_no}").first
+            if await locator.count() > 0:
+                row_locator = locator.locator("xpath=ancestor::tr[1]")
+            else:
+                for team in [home_team, away_team]:
+                    locator = page.locator(f"text={team}").first
+                    if await locator.count() > 0:
+                        row_locator = locator.locator("xpath=ancestor::tr[1]")
+                        break
 
-            # 打开页面
-            url = "https://m.sporttery.cn/mjc/jsq/zqspf/"
-            print(f"[竞彩API] 打开页面: {url}")
-            await page.goto(url, wait_until="networkidle")
-            await page.wait_for_timeout(5000)
+            if row_locator:
+                # 点击展开投注
+                expand_btn = row_locator.locator("button:has-text('展开投注'), a:has-text('展开投注'), span:has-text('展开投注')").first
+                if await expand_btn.count() > 0:
+                    await expand_btn.click()
+                    await page.wait_for_timeout(3000)
+                    print("[500彩票网] 已点击比分行展开投注")
+                else:
+                    print("[500彩票网] 未找到展开投注按钮")
 
-            # 如果没有捕获到数据，尝试点击其他玩法标签
-            if not captured_responses:
-                print("[竞彩API] 未捕获到数据，尝试点击比分、进球数、半全场标签")
-                tabs = ["比分", "进球数", "半全场"]
-                for tab in tabs:
-                    try:
-                        await page.click(f"text={tab}")
-                        await page.wait_for_timeout(2000)
-                        if captured_responses:
-                            break
-                    except Exception as e:
-                        print(f"[竞彩API] 点击 {tab} 失败: {e}")
+            # 重新获取行 HTML
+            row_html = await row_locator.evaluate("el => el.outerHTML")
+            soup_score = BeautifulSoup(row_html, "lxml")
+            # 提取比分和赔率对
+            row_text = soup_score.get_text(" ", strip=True)
+            pairs = re.findall(r"(\d+[:：]\d+)\s+(\d+\.\d+)", row_text)
+            if pairs:
+                score_dict = {}
+                for score, odds in pairs:
+                    score_clean = score.replace(":", "-").replace("：", "-")
+                    score_dict[score_clean] = odds
+                data["比分赔率"] = score_dict
+                print(f"[500彩票网] 已解析比分赔率 {len(score_dict)} 项")
+            else:
+                print("[500彩票网] 未匹配到比分赔率格式")
 
             await browser.close()
     except Exception as e:
-        print(f"[竞彩API] Playwright 执行异常: {e}")
-        return data
+        print(f"[500彩票网] 比分解析异常: {e}")
 
-    if not captured_responses:
-        print("[竞彩API] 未捕获到任何API响应")
-        return data
-
-    # 合并所有响应中的 matchList
-    all_matches = []
-    for resp in captured_responses:
-        try:
-            match_list = resp.get("data", {}).get("matchList", [])
-            if not match_list:
-                match_list = resp.get("value", {}).get("matchList", [])
-            all_matches.extend(match_list)
-        except:
-            pass
-
-    if not all_matches:
-        print("[竞彩API] 响应中未找到 matchList")
-        return data
-
-    # 匹配目标比赛
-    target = None
-    for m in all_matches:
-        if m.get("matchNumStr") == match_no or m.get("matchNum") == match_no:
-            target = m
-            break
-        if (m.get("homeTeam") == home_team or home_team in m.get("homeTeam", "")) and \
-           (m.get("awayTeam") == away_team or away_team in m.get("awayTeam", "")):
-            target = m
-            break
-
-    if not target:
-        print(f"[竞彩API] 未找到比赛 {match_no} {home_team} VS {away_team}")
-        return data
-
-    # 解析各玩法赔率（同之前版本）
-    had = target.get("had", {})
-    if had:
-        h, d, a = had.get("h"), had.get("d"), had.get("a")
-        if h and d and a:
-            data["胜平负"]["初赔"]["主胜"] = str(h)
-            data["胜平负"]["初赔"]["平"] = str(d)
-            data["胜平负"]["初赔"]["客胜"] = str(a)
-            data["胜平负"]["即赔"]["主胜"] = str(h)
-            data["胜平负"]["即赔"]["平"] = str(d)
-            data["胜平负"]["即赔"]["客胜"] = str(a)
-            t = had.get("updateTime") or had.get("updateDate")
-            if t:
-                data["胜平负"]["初赔"]["时间"] = t
-                data["胜平负"]["即赔"]["时间"] = t
-        single = had.get("single")
-        if single is not None:
-            data["是否单关"] = bool(single)
-
-    hhad = target.get("hhad", {})
-    if hhad:
-        goal = hhad.get("goal") or hhad.get("rq") or hhad.get("hhadGoal")
-        if goal is not None:
-            data["让球胜平负"]["官方让球数"] = str(goal)
-        h, d, a = hhad.get("h"), hhad.get("d"), hhad.get("a")
-        if h and d and a:
-            data["让球胜平负"]["初赔"]["让胜"] = str(h)
-            data["让球胜平负"]["初赔"]["让平"] = str(d)
-            data["让球胜平负"]["初赔"]["让负"] = str(a)
-            data["让球胜平负"]["即赔"]["让胜"] = str(h)
-            data["让球胜平负"]["即赔"]["让平"] = str(d)
-            data["让球胜平负"]["即赔"]["让负"] = str(a)
-
-    crs = target.get("crs", {})
-    if crs:
-        score_dict = {}
-        for code, odds in crs.items():
-            if code in ("updateDate", "updateTime"):
-                continue
-            score = decode_crs(code)
-            score_dict[score] = str(odds)
-        if score_dict:
-            data["比分赔率"] = score_dict
-
-    ttg = target.get("ttg", {})
-    if ttg:
-        total_dict = {}
-        for code, odds in ttg.items():
-            if code in ("updateDate", "updateTime"):
-                continue
-            goals = decode_ttg(code)
-            total_dict[goals] = str(odds)
-        if total_dict:
-            data["总进球赔率"] = total_dict
-
-    hafu = target.get("hafu", {})
-    if hafu:
-        hf_dict = {}
-        for code, odds in hafu.items():
-            if code in ("updateDate", "updateTime"):
-                continue
-            key = decode_hafu(code)
-            hf_dict[key] = str(odds)
-        if hf_dict:
-            data["半全场赔率"] = hf_dict
-
+    # ============ 返还率计算 ============
     try:
         h = float(data["胜平负"]["即赔"]["主胜"])
         d = float(data["胜平负"]["即赔"]["平"])
