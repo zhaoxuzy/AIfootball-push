@@ -15,7 +15,8 @@ from src.collectors.fundamentals import (
     collect_recent_form,
     collect_injuries,
     collect_coach_info,
-    collect_head_to_head
+    collect_head_to_head,
+    get_league_key
 )
 from src.collectors.motivation import collect_motivation
 from src.collectors.rhythm import collect_rhythm
@@ -70,11 +71,15 @@ async def main():
         match_data['赛季阶段信息'] = collect_season_info(match, home_en, away_en)
 
         print("  阶段3: 基本面")
+        league_cn = match.get('league')
+        league_key = get_league_key(league_cn) if league_cn else None
+        season = "2026-2027"  # 可根据实际调整
+
         for side, team_en in [('主队', home_en), ('客队', away_en)]:
             if team_en:
                 match_data['基本面'][side]['Elo'] = collect_elo(team_en)
-                match_data['基本面'][side]['xG'] = collect_xg(team_en)
-                match_data['基本面'][side]['近期战绩'] = collect_recent_form(team_en)
+                match_data['基本面'][side]['xG'] = collect_xg(team_en, league_key, season)
+                match_data['基本面'][side]['近期战绩'] = collect_recent_form(team_en, league_key, season)
                 match_data['基本面'][side]['伤停'] = collect_injuries(team_en)
                 match_data['基本面'][side]['主教练'] = collect_coach_info(team_en)
             else:
@@ -92,7 +97,7 @@ async def main():
         match_data['节奏数据']['客队'] = collect_rhythm(away_en) if away_en else None
 
         print("  阶段6: 竞彩盘口（官方API）")
-        odds_data = await collect_odds_api(match)   # 关键：必须 await
+        odds_data = await collect_odds_api(match)
         match_data['竞彩盘口'] = odds_data
         if odds_data.get("胜平负", {}).get("即赔", {}).get("主胜"):
             match_data['基本标识']['竞彩赔率状态'] = True
