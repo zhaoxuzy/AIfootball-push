@@ -6,6 +6,11 @@ from playwright.async_api import async_playwright
 from src.utils import now_str
 
 async def collect_odds_api(match):
+    """
+    从500彩票网采集竞彩赔率：
+    - 胜平负/让球、总进球、半全场：requests + BeautifulSoup 直接解析
+    - 比分：Playwright 点击展开后，使用正则匹配比分标签+赔率
+    """
     data = {
         "胜平负": {
             "初赔": {"主胜": None, "平": None, "客胜": None, "时间": None},
@@ -32,6 +37,7 @@ async def collect_odds_api(match):
     home_team = match.get("home_team", "")
     away_team = match.get("away_team", "")
 
+    # 清洗队名（可能包含联赛前缀）
     if " " in home_team:
         home_team = home_team.strip().split()[-1]
     if " " in away_team:
@@ -72,11 +78,15 @@ async def collect_odds_api(match):
         if tr:
             row_text = tr.get_text(" ", strip=True)
             print(f"[500彩票网] 胜平负/让球行文本: {row_text}")
+
+            # 让球数
             handicap_match = re.search(r"([+-])(\d+)", row_text)
             if handicap_match:
                 sign = handicap_match.group(1)
                 num = int(handicap_match.group(2))
                 data["让球胜平负"]["官方让球数"] = f"{sign}{num}"
+
+            # 提取所有小数
             odds = re.findall(r"\d+\.\d+", row_text)
             print(f"[500彩票网] 小数列表: {odds}")
             if len(odds) >= 3:
@@ -140,7 +150,7 @@ async def collect_odds_api(match):
         else:
             print("[500彩票网] 半全场页面未找到比赛行")
 
-    # ========== 4. 比分（Playwright 点击展开后，获取整页HTML并收集后续兄弟节点文本） ==========
+    # ========== 4. 比分（Playwright 点击展开后，用正则匹配比分标签） ==========
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -155,72 +165,64 @@ async def collect_odds_api(match):
             await page.goto(url_score, wait_until="load")
             await page.wait_for_timeout(8000)
 
-            # 定位目标行（使用比赛编号）
+            # 定位目标行
             row_locator = page.locator(f"text={match_no}").first
             if await row_locator.count() == 0:
-                # 尝试主队/客队
                 row_locator = page.locator(f"text={home_team}").first
-                if await row_locator.count() == 0:
-                    row_locator = page.locator(f"text={away_team}").first
+            if await row_locator.count() == 0:
+                row_locator = page.locator(f"text={away_team}").first
 
             if await row_locator.count() == 0:
                 print("[500彩票网] 比分页面未定位到比赛行")
                 await browser.close()
                 return data
 
-            # 获取初始行文本（点击前）
-            row_text = await row_locator.inner_text()
-            print(f"[500彩票网] 比分行文本(点击前): {row_text[:200]}...")  # 截断避免过长
-
-            # 检查是否已展开（存在“收起投注”）或需要点击“展开投注”
+            # 检查展开状态
             expand_btn = row_locator.locator("text=展开投注").first
             collapse_btn = row_locator.locator("text=收起投注").first
-
             if await collapse_btn.count() > 0:
                 print("[500彩票网] 已处于展开状态")
             elif await expand_btn.count() > 0:
                 print("[500彩票网] 点击展开投注")
                 await expand_btn.click()
-                await page.wait_for_timeout(3000)  # 等待展开动画和内容加载
+                await page.wait_for_timeout(3000)
             else:
                 print("[500彩票网] 未找到展开/收起按钮，尝试直接提取")
 
-            # 点击后，获取整个页面HTML
+            # 获取整页HTML并解析
             html = await page.content()
             soup = BeautifulSoup(html, "lxml")
-
-            # 定位包含比赛编号的 tr
             target_tr = find_target_row(soup, match_no, home_team, away_team)
             if not target_tr:
                 print("[500彩票网] 全页HTML中未找到比赛行")
                 await browser.close()
                 return data
 
-            # 收集该 tr 及其后续兄弟节点的文本，直到遇到下一个包含“周三”或“周四”等比赛编号的节点
+            # 合并后续兄弟节点文本
             combined_text = target_tr.get_text(" ", strip=True)
             sibling = target_tr.find_next_sibling()
             while sibling:
                 sib_text = sibling.get_text(" ", strip=True)
-                # 如果遇到下一个比赛编号，则停止
                 if re.search(r"周[一二三四五六日]\d{3}", sib_text):
                     break
                 combined_text += " " + sib_text
                 sibling = sibling.find_next_sibling()
 
             print(f"[500彩票网] 合并后文本片段: {combined_text[:500]}...")
-            odds = re.findall(r"\d+\.\d+", combined_text)
-            print(f"[500彩票网] 比分小数数量: {len(odds)}")
 
-            if len(odds) >= 31:
-                home_keys = ["1:0","2:0","2:1","3:0","3:1","3:2","4:0","4:1","4:2","5:0","5:1","5:2","胜其它"]
-                draw_keys = ["0:0","1:1","2:2","3:3","平其它"]
-                away_keys = ["0:1","0:2","1:2","0:3","1:3","2:3","0:4","1:4","2:4","0:5","1:5","2:5","负其它"]
-                all_keys = home_keys + draw_keys + away_keys
-                score_dict = {k: v for k, v in zip(all_keys, odds)}
+            # 使用正则匹配比分标签+赔率对
+            pattern = r"(\d+:\d+|胜其它|平其它|负其它)\s+(\d+\.\d+)"
+            pairs = re.findall(pattern, combined_text)
+            print(f"[500彩票网] 提取到比分-赔率对数量: {len(pairs)}")
+            if len(pairs) >= 31:
+                score_dict = {}
+                for key, val in pairs:
+                    key_clean = key.replace(":", "-") if ":" in key else key
+                    score_dict[key_clean] = val
                 data["比分赔率"] = score_dict
-                print("[500彩票网] 已按固定顺序映射比分赔率")
+                print("[500彩票网] 已成功解析比分赔率")
             else:
-                print("[500彩票网] 比分赔率不足31个，未解析")
+                print("[500彩票网] 比分赔率对不足31个，未解析")
 
             await browser.close()
     except Exception as e:
