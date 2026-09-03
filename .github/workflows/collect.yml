@@ -34,8 +34,9 @@ jobs:
         run: |
           python src/main.py
 
+      # ✅ 关键修改：将 actions/upload-artifact 从 v3 升级到 v4
       - name: Upload JSON artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: collected-data
           path: output/*.json
