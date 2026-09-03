@@ -67,13 +67,13 @@ async def main():
             "自检": {}
         }
 
-        print("  阶段2: 赛季信息")
+        print("  阶段1: 赛季信息")
         match_data['赛季阶段信息'] = collect_season_info(match, home_en, away_en)
 
-        print("  阶段3: 基本面")
+        print("  阶段2: 基本面")
         league_cn = match.get('league')
         league_key = get_league_key(league_cn) if league_cn else None
-        season = "2026-2027"  # 可根据实际调整
+        season = "2026-2027"
 
         for side, team_en in [('主队', home_en), ('客队', away_en)]:
             if team_en:
@@ -86,17 +86,15 @@ async def main():
                 match_data['基本面'][side] = None
         if home_en and away_en:
             match_data['基本面']['历史交锋'] = collect_head_to_head(home_en, away_en)
-        else:
-            match_data['基本面']['历史交锋'] = None
 
-        print("  阶段4: 战意指数")
+        print("  阶段3: 战意指数")
         match_data['战意指数'] = collect_motivation(match, home_en, away_en)
 
-        print("  阶段5: 节奏数据")
+        print("  阶段4: 节奏数据")
         match_data['节奏数据']['主队'] = collect_rhythm(home_en) if home_en else None
         match_data['节奏数据']['客队'] = collect_rhythm(away_en) if away_en else None
 
-        print("  阶段6: 竞彩盘口（官方API）")
+        print("  阶段5: 竞彩盘口")
         odds_data = await collect_odds_api(match)
         match_data['竞彩盘口'] = odds_data
         if odds_data.get("胜平负", {}).get("即赔", {}).get("主胜"):
@@ -120,6 +118,7 @@ async def main():
     filepath = save_json(result_array, filename)
     print(f"JSON 已保存: {filepath}")
 
+    # 钉钉推送
     summary_lines = ["### 竞彩数据采集完成",
                      f"- 采集时间：{now_str()}",
                      f"- 比赛数量：{len(result_array)}"]
