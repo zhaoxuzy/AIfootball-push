@@ -17,10 +17,9 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/118.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
 ]
 
-# 增强的请求头模板（用于绕过SofaScore 403）
+# 增强的请求头（模仿真实浏览器，绕过 SofaScore 防护）
 DEFAULT_HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
@@ -35,10 +34,7 @@ DEFAULT_HEADERS = {
 }
 
 def fetch_url(url: str, retry: int = 3, timeout: int = 20, headers: Optional[Dict] = None) -> Optional[str]:
-    """
-    通用HTTP GET请求，带重试和完整请求头
-    增加超时时间到20秒，解决ClubElo超时问题
-    """
+    """通用 HTTP GET 请求，带重试和完整请求头"""
     for attempt in range(retry):
         try:
             if headers is None:
@@ -62,7 +58,7 @@ def fetch_url(url: str, retry: int = 3, timeout: int = 20, headers: Optional[Dic
     return None
 
 def fetch_json(url: str, retry: int = 3, timeout: int = 20, headers: Optional[Dict] = None) -> Optional[Dict]:
-    """请求JSON数据"""
+    """请求 JSON 数据"""
     text = fetch_url(url, retry, timeout, headers)
     if text:
         try:
@@ -73,11 +69,9 @@ def fetch_json(url: str, retry: int = 3, timeout: int = 20, headers: Optional[Di
     return None
 
 def now_str() -> str:
-    """返回当前UTC+8时间字符串"""
     return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
 
 def save_json(data: Any, filename: str, output_dir: str = "output") -> str:
-    """保存JSON文件到output目录，返回文件路径"""
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     filepath = Path(output_dir) / filename
     with open(filepath, 'w', encoding='utf-8') as f:
@@ -85,7 +79,6 @@ def save_json(data: Any, filename: str, output_dir: str = "output") -> str:
     return str(filepath)
 
 def send_dingtalk(title: str, content: str, webhook: Optional[str] = None, secret: Optional[str] = None) -> bool:
-    """发送钉钉消息（支持加签）"""
     webhook = webhook or DINGTALK_WEBHOOK
     secret = secret or DINGTALK_SECRET
     if not webhook:
@@ -102,10 +95,7 @@ def send_dingtalk(title: str, content: str, webhook: Optional[str] = None, secre
 
     payload = {
         "msgtype": "markdown",
-        "markdown": {
-            "title": title,
-            "text": content
-        }
+        "markdown": {"title": title, "text": content}
     }
     try:
         resp = requests.post(webhook, json=payload, timeout=10)
