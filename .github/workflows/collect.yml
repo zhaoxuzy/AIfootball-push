@@ -14,10 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
@@ -25,16 +25,23 @@ jobs:
         run: |
           pip install -r requirements.txt
 
+      # 安装 Playwright 浏览器（用于解析500彩票网动态页面）
+      - name: Install Playwright browsers
+        run: |
+          playwright install
+          playwright install-deps
+
       - name: Run data collection
         env:
           INPUT_MATCHES: ${{ github.event.inputs.matches }}
           DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
           DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+          # 防止Playwright重复下载浏览器
+          PLAYWRIGHT_BROWSERS_PATH: /opt/hostedtoolcache/playwright
         run: |
           python src/main.py
 
-      # ✅ 关键修改：将 actions/upload-artifact 从 v3 升级到 v4
       - name: Upload JSON artifact
         uses: actions/upload-artifact@v4
         with:
