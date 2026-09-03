@@ -25,7 +25,7 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      # 安装 Playwright 浏览器（用于解析500彩票网动态页面）
+      # 关键步骤：安装 Playwright 浏览器（供 odds_api.py 使用）
       - name: Install Playwright browsers
         run: |
           playwright install
@@ -37,8 +37,6 @@ jobs:
           DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
           DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
-          # 防止Playwright重复下载浏览器
-          PLAYWRIGHT_BROWSERS_PATH: /opt/hostedtoolcache/playwright
         run: |
           python src/main.py
 
