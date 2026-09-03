@@ -1,7 +1,13 @@
 name: Manual Football Data Collection
 
 on:
-  workflow_dispatch:        # 仅手动触发
+  workflow_dispatch:
+    inputs:
+      matches:
+        description: '比赛列表，每行一场，格式：周四005 法甲 图卢兹 VS 里尔'
+        required: true
+        default: '周四005 法甲 图卢兹 VS 里尔'
+        type: string
 
 jobs:
   collect:
@@ -21,7 +27,7 @@ jobs:
 
       - name: Run data collection
         env:
-          INPUT_MATCHES: ${{ secrets.INPUT_MATCHES }}
+          INPUT_MATCHES: ${{ github.event.inputs.matches }}
           DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
           DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
