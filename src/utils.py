@@ -1,51 +1,100 @@
+import os
 import json
-import random
 import time
+import random
+import hashlib
+import base64
+import hmac
 import requests
 from datetime import datetime
 from pathlib import Path
-import hashlib
-import base64
-import urllib.parse
-import hmac
+from typing import Optional, Dict, Any
 
-from config import TZ, DINGTALK_WEBHOOK, DINGTALK_SECRET
+from src.config import DINGTALK_WEBHOOK, DINGTALK_SECRET
 
-def now_str():
-    return datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/118.0",
+]
 
-def save_json(data, filename):
-    output_dir = Path("output")
-    output_dir.mkdir(exist_ok=True)
-    filepath = output_dir / filename
-    with open(filepath, "w", encoding="utf-8") as f:
+def fetch_url(url: str, retry: int = 3, timeout: int = 15, headers: Optional[Dict] = None) -> Optional[str]:
+    """通用HTTP GET请求，带重试和随机User-Agent"""
+    for attempt in range(retry):
+        try:
+            if headers is None:
+                headers = {
+                    "User-Agent": random.choice(USER_AGENTS),
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                    "Referer": "https://www.google.com/",
+                }
+            resp = requests.get(url, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+            return resp.text
+        except Exception as e:
+            print(f"请求失败 (尝试 {attempt+1}/{retry}): {url} -> {e}")
+            if attempt < retry - 1:
+                time.sleep(random.uniform(2, 5))
+    return None
+
+def fetch_json(url: str, retry: int = 3, timeout: int = 15, headers: Optional[Dict] = None) -> Optional[Dict]:
+    """请求JSON数据"""
+    text = fetch_url(url, retry, timeout, headers)
+    if text:
+        try:
+            return json.loads(text)
+        except:
+            return None
+    return None
+
+def now_str() -> str:
+    """返回当前UTC+8时间字符串"""
+    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
+
+def save_json(data: Any, filename: str, output_dir: str = "output") -> str:
+    """保存JSON文件到output目录，返回文件路径"""
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    filepath = Path(output_dir) / filename
+    with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    return filepath
+    return str(filepath)
 
-def send_dingtalk(title, text):
-    if not DINGTALK_WEBHOOK:
-        print("未配置钉钉机器人，跳过通知")
-        return
-    timestamp = str(round(time.time() * 1000))
-    secret_enc = DINGTALK_SECRET.encode("utf-8")
-    string_to_sign = f"{timestamp}\n{DINGTALK_SECRET}"
-    string_to_sign_enc = string_to_sign.encode("utf-8")
-    hmac_code = hmac.new(secret_enc, string_to_sign_enc, digestmod=hashlib.sha256).digest()
-    sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
-    url = f"{DINGTALK_WEBHOOK}&timestamp={timestamp}&sign={sign}"
-    headers = {"Content-Type": "application/json"}
+def send_dingtalk(title: str, content: str, webhook: Optional[str] = None, secret: Optional[str] = None) -> bool:
+    """发送钉钉消息（支持加签）"""
+    webhook = webhook or DINGTALK_WEBHOOK
+    secret = secret or DINGTALK_SECRET
+    if not webhook:
+        print("钉钉webhook未配置，跳过推送")
+        return False
+
+    if secret:
+        timestamp = str(round(time.time() * 1000))
+        sign_str = timestamp + "\n" + secret
+        signature = base64.b64encode(
+            hmac.new(secret.encode('utf-8'), sign_str.encode('utf-8'), digestmod=hashlib.sha256).digest()
+        ).decode('utf-8')
+        webhook = f"{webhook}&timestamp={timestamp}&sign={signature}"
+
     payload = {
         "msgtype": "markdown",
         "markdown": {
             "title": title,
-            "text": text
+            "text": content
         }
     }
     try:
-        r = requests.post(url, json=payload, headers=headers, timeout=10)
-        print(f"钉钉通知状态: {r.status_code} {r.text}")
+        resp = requests.post(webhook, json=payload, timeout=10)
+        if resp.status_code == 200:
+            result = resp.json()
+            if result.get('errcode') == 0:
+                print("钉钉推送成功")
+                return True
+            else:
+                print(f"钉钉推送失败: {result}")
+        else:
+            print(f"钉钉推送HTTP错误: {resp.status_code}")
     except Exception as e:
-        print(f"钉钉通知失败: {e}")
-
-def random_sleep(min_sec=2, max_sec=5):
-    time.sleep(random.uniform(min_sec, max_sec))
+        print(f"钉钉推送异常: {e}")
+    return False
