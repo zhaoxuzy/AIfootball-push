@@ -17,35 +17,58 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/118.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
 ]
 
-def fetch_url(url: str, retry: int = 3, timeout: int = 15, headers: Optional[Dict] = None) -> Optional[str]:
-    """通用HTTP GET请求，带重试和随机User-Agent"""
+# 增强的请求头模板（用于绕过SofaScore 403）
+DEFAULT_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Origin": "https://www.sofascore.com",
+    "Referer": "https://www.sofascore.com/",
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-site",
+    "Connection": "keep-alive",
+    "Cache-Control": "no-cache",
+}
+
+def fetch_url(url: str, retry: int = 3, timeout: int = 20, headers: Optional[Dict] = None) -> Optional[str]:
+    """
+    通用HTTP GET请求，带重试和完整请求头
+    增加超时时间到20秒，解决ClubElo超时问题
+    """
     for attempt in range(retry):
         try:
             if headers is None:
-                headers = {
-                    "User-Agent": random.choice(USER_AGENTS),
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                    "Referer": "https://www.google.com/",
-                }
+                headers = DEFAULT_HEADERS.copy()
+                headers["User-Agent"] = random.choice(USER_AGENTS)
             resp = requests.get(url, headers=headers, timeout=timeout)
             resp.raise_for_status()
             return resp.text
+        except requests.exceptions.Timeout as e:
+            print(f"请求超时 (尝试 {attempt+1}/{retry}): {url} -> {e}")
+            if attempt < retry - 1:
+                time.sleep(random.uniform(3, 6))
+        except requests.exceptions.HTTPError as e:
+            print(f"HTTP错误 (尝试 {attempt+1}/{retry}): {url} -> {e}")
+            if attempt < retry - 1:
+                time.sleep(random.uniform(3, 6))
         except Exception as e:
             print(f"请求失败 (尝试 {attempt+1}/{retry}): {url} -> {e}")
             if attempt < retry - 1:
                 time.sleep(random.uniform(2, 5))
     return None
 
-def fetch_json(url: str, retry: int = 3, timeout: int = 15, headers: Optional[Dict] = None) -> Optional[Dict]:
+def fetch_json(url: str, retry: int = 3, timeout: int = 20, headers: Optional[Dict] = None) -> Optional[Dict]:
     """请求JSON数据"""
     text = fetch_url(url, retry, timeout, headers)
     if text:
         try:
             return json.loads(text)
-        except:
+        except json.JSONDecodeError as e:
+            print(f"JSON解析失败: {url} -> {e}")
             return None
     return None
 
